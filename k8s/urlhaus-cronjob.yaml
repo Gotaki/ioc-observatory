@@ -1,0 +1,43 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: urlhaus-collector
+spec:
+  # Cron syntax: minute hour day month weekday. This means every 15 minutes.
+  # URLhaus refreshes its file every 5 minutes and asks not to be polled faster.
+  schedule: "*/15 * * * *"
+  # If the previous run is still going, skip the new one instead of running two at once.
+  concurrencyPolicy: Forbid
+  # Keep the last 3 finished and 3 failed runs so you can read their logs.
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # Retry a failed run up to 2 times before marking the Job as failed.
+      backoffLimit: 2
+      template:
+        spec:
+          # Don't restart a pod in place; the Job creates a fresh pod on retry.
+          restartPolicy: Never
+          containers:
+            - name: collector
+              image: urlhaus-collector:0.1
+              # The image only exists inside the kind cluster (we loaded it),
+              # so never try to download it from the internet.
+              imagePullPolicy: IfNotPresent
+              env:
+                # Hand the key to the container as an environment variable,
+                # read from the Secret. The Python code is unchanged.
+                - name: ABUSE_CH_AUTH_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: abuse-ch
+                      key: ABUSE_CH_AUTH_KEY
+              resources:
+                # What the pod is guaranteed (requests) and the most it may use (limits).
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 250m
+                  memory: 256Mi
