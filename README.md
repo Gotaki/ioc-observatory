@@ -106,7 +106,7 @@ All collection is passive and uses public data or official APIs only. No scannin
 
 | Phase | Weeks | Deliverable | Done |
 |---|---|---|---|
-| 1 | 1-2 | URLhaus collector as a CronJob, OTel metrics, first Grafana dashboard | [ ] |
+| 1 | 1-2 | URLhaus collector as a CronJob, OTel metrics, first Grafana dashboard | [X] |
 | 2 | 3-4 | Add CISA KEV and OTX, common IOC schema, Postgres storage | [ ] |
 | 3 | 5-8 | Split into queued stages, end-to-end tracing per IOC | [ ] |
 | 4 | 9-12 | Certificate Transparency lookalike monitor, scoring, STIX export | [ ] |
