@@ -1,0 +1,31 @@
+# One Collector Deployment that receives OTLP and exposes metrics to Prometheus.
+mode: deployment
+fullnameOverride: otel-collector     # stable service name: otel-collector
+image:
+  repository: otel/opentelemetry-collector-k8s
+
+# Extra port the Prometheus exporter will listen on (8889).
+ports:
+  prom-exp:
+    enabled: true
+    containerPort: 8889
+    servicePort: 8889
+    protocol: TCP
+
+# Tell the Prometheus server to scrape this service.
+service:
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8889"
+
+config:
+  exporters:
+    prometheus:
+      endpoint: 0.0.0.0:8889
+  service:
+    pipelines:
+      metrics:
+        # Pipelines must list every component, defaults included.
+        receivers: [otlp]
+        processors: [memory_limiter, batch]
+        exporters: [prometheus]
