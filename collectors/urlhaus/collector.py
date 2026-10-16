@@ -1,77 +1,118 @@
-"""URLhaus collector (local version).
+"""URLhaus collector with OpenTelemetry metrics.
 
-In one line: download the list of recently reported malware URLs from
-abuse.ch's URLhaus, turn it into Python data, and print a short summary.
+Downloads the recent-URLs list from abuse.ch, prints a summary, and reports
+numbers (records, online/offline counts, run time, success) to an OTel Collector.
+If OTEL_EXPORTER_OTLP_ENDPOINT is not set, it skips telemetry and just prints.
 """
-import csv                       # reads CSV (comma-separated) text
-import os                        # reads environment variables (where the key lives)
-import sys                       # lets us stop the script with an error message
-from collections import Counter  # counts how often each value appears
+import csv
+import os
+import sys
+import time
+from collections import Counter
 
-import requests                  # makes the web request that downloads the data
-from dotenv import load_dotenv   # copies values from the .env file into environment variables
+import requests
+from dotenv import load_dotenv
+from opentelemetry import metrics
+from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.sdk.resources import Resource
 
-# Base address of the URLhaus export files. The API key is inserted into it below.
 BASE = "https://urlhaus-api.abuse.ch/v2/files/exports"
 
 
+class FetchError(Exception):
+    """A failure whose message is safe to print (it never contains the API key)."""
+
+
 def fetch_recent(auth_key: str) -> str:
-    """Download recent.csv and return its contents as one big string."""
-    # abuse.ch expects the key as part of the address itself.
     url = f"{BASE}/{auth_key}/recent.csv"
     try:
-        # Ask the server for the file. Give up after 30 seconds.
         resp = requests.get(url, timeout=30)
     except requests.RequestException as exc:
-        # Network problem (no internet, DNS failure, timeout).
-        # Print only the error TYPE: the full message would include the URL,
-        # and the URL contains your secret key.
-        sys.exit(f"Request failed ({type(exc).__name__})")
+        # "from None" hides the original error: its text contains the URL, and the URL contains the key.
+        raise FetchError(f"Request failed ({type(exc).__name__})") from None
     if resp.status_code != 200:
-        # 200 means OK. Anything else (401/403 = bad key, 5xx = server trouble) stops the script.
-        sys.exit(f"URLhaus returned HTTP {resp.status_code}")
-    return resp.text  # the file contents as text
+        raise FetchError(f"URLhaus returned HTTP {resp.status_code}")
+    return resp.text
 
 
 def parse(text: str):
-    """Turn the CSV text into (column_names, list_of_records)."""
     header, rows = None, []
-    for line in text.splitlines():           # go through the file one line at a time
+    for line in text.splitlines():
         if not line.strip():
-            continue                         # skip blank lines
+            continue
         if line.startswith("#"):
-            # Lines starting with # are comments from abuse.ch, not data.
-            # One of them holds the column names, so check whether this is it.
-            candidate = line.lstrip("# ").strip()          # remove the leading "# "
+            candidate = line.lstrip("# ").strip()
             if "," in candidate and "url" in candidate.lower():
-                header = next(csv.reader([candidate]))     # split "id,dateadded,url,..." into a list
-            continue                         # comment lines are never data rows
-        # A normal line is one record. csv.reader splits it correctly even when
-        # a value contains a comma inside quotes. It expects a list of lines,
-        # so we pass [line] and take the first (only) result with next().
+                header = next(csv.reader([candidate]))
+            continue
         rows.append(next(csv.reader([line])))
     if header is None and rows:
-        header = rows.pop(0)                 # fallback: treat the first data line as the header
+        header = rows.pop(0)
     header = header or []
-    # Pair the column names with each row so a record becomes a dictionary,
-    # e.g. {"id": "123", "url": "http://...", "url_status": "online", ...}
     return header, [dict(zip(header, r)) for r in rows]
 
 
+def setup_metrics():
+    """Create the OTel metrics pipeline, or return None if no endpoint is configured."""
+    if not os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
+        return None
+    # The exporter reads the endpoint from that environment variable by itself.
+    reader = PeriodicExportingMetricReader(OTLPMetricExporter(), export_interval_millis=60_000)
+    provider = MeterProvider(
+        resource=Resource.create({"service.name": "urlhaus-collector"}),
+        metric_readers=[reader],
+    )
+    metrics.set_meter_provider(provider)
+    return provider
+
+
 def main() -> None:
-    load_dotenv()  # read .env (if it exists) into environment variables
-    key = os.environ.get("ABUSE_CH_AUTH_KEY")  # look the key up by name; None if missing
-    if not key:
-        sys.exit("ABUSE_CH_AUTH_KEY is not set (put it in .env)")
-    header, records = parse(fetch_recent(key))  # download, then parse
-    print(f"columns: {header}")
-    print(f"records fetched: {len(records)}")
-    for col in ("url_status", "threat"):
-        if col in header:
-            # Count how often each value appears in that column and show the top 5,
-            # e.g. {'offline': 17783, 'online': 16109}
-            print(f"{col}: {dict(Counter(r[col] for r in records).most_common(5))}")
+    load_dotenv()
+    provider = setup_metrics()
+    meter = metrics.get_meter("urlhaus-collector")  # a harmless no-op meter if telemetry is off
+
+    # Gauges: "the value at the end of the latest run".
+    g_records = meter.create_gauge("urlhaus.records.fetched", description="Rows in the feed this run")
+    g_status = meter.create_gauge("urlhaus.records.by_status", description="Rows per url_status value")
+    g_duration = meter.create_gauge("urlhaus.run.duration", unit="s", description="Run time in seconds")
+    g_success = meter.create_gauge("urlhaus.last_run.success", description="1 if the last run worked, else 0")
+    g_last_ok = meter.create_gauge("urlhaus.last_success.timestamp", unit="s", description="Unix time of last good run")
+
+    start = time.monotonic()
+    ok = False
+    try:
+        key = os.environ.get("ABUSE_CH_AUTH_KEY")
+        if not key:
+            raise FetchError("ABUSE_CH_AUTH_KEY is not set (put it in .env)")
+        header, records = parse(fetch_recent(key))
+        print(f"columns: {header}")
+        print(f"records fetched: {len(records)}")
+        g_records.set(len(records))
+        for col in ("url_status", "threat"):
+            if col in header:
+                counts = Counter(r[col] for r in records)
+                print(f"{col}: {dict(counts.most_common(5))}")
+                if col == "url_status":
+                    for status, n in counts.items():
+                        g_status.set(n, {"status": status})
+        ok = True
+    except FetchError as exc:
+        print(f"run failed: {exc}")
+    except Exception as exc:
+        # Print only the exception type: the message could contain the key.
+        print(f"run failed: {type(exc).__name__}")
+    finally:
+        g_duration.set(time.monotonic() - start)
+        g_success.set(1 if ok else 0)
+        if ok:
+            g_last_ok.set(time.time())
+        if provider is not None:
+            provider.force_flush()  # send now: the process is about to exit
+            provider.shutdown()
+    sys.exit(0 if ok else 1)  # non-zero marks the Kubernetes Job as failed
 
 
-if __name__ == "__main__":  # run main() only when started directly, not when imported
+if __name__ == "__main__":
     main()

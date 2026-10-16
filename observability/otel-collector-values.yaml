@@ -2,7 +2,7 @@
 mode: deployment
 fullnameOverride: otel-collector     # stable service name: otel-collector
 image:
-  repository: otel/opentelemetry-collector-k8s
+  repository: otel/opentelemetry-collector-contrib
 
 # Extra port the Prometheus exporter will listen on (8889).
 ports:
@@ -22,6 +22,7 @@ config:
   exporters:
     prometheus:
       endpoint: 0.0.0.0:8889
+      metric_expiration: 30m
   service:
     pipelines:
       metrics:
