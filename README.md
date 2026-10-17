@@ -1,134 +1,198 @@
 # ioc-observatory
 
-A Kubernetes-native pipeline that collects public threat intelligence (OSINT), normalises and scores it, and is fully instrumented with OpenTelemetry so you can see how the pipeline itself is performing.
+A Kubernetes-native threat-intelligence (OSINT) pipeline, instrumented end to end with OpenTelemetry. It collects public Indicators of Compromise (IOCs) on a schedule and reports how the pipeline itself is performing, so each data source can be judged on freshness, reliability and usefulness.
 
-> **Status:** Planning / early build. Everything below describes the target design. Items are marked as built only once they actually run.
+> **Status: Phase 1 complete.** A URLhaus collector runs as a Kubernetes CronJob, pushes OpenTelemetry metrics through an OTel Collector to Prometheus, and is visualised in Grafana. Storage, more sources, queued pipeline stages and tracing are planned (see the [roadmap](#roadmap)). Anything not marked as built is a plan, not a feature.
 
-## What it does
+![Grafana dashboard](docs/dashboard.png)
 
-The engine pulls Indicators of Compromise (IOCs) such as malicious URLs, domains, IPs and vulnerabilities from free public sources, converts them into one common format, removes duplicates, enriches them with context, assigns a confidence score, and exports the result for use by other security tools.
+## What works today
 
-OpenTelemetry records metrics, traces and logs for every stage, so each IOC can be followed end to end and each data source can be judged on freshness, reliability and usefulness.
+| Component | Detail |
+|---|---|
+| URLhaus collector | Python script that downloads abuse.ch's recent-URLs export and summarises it |
+| Scheduling | Kubernetes CronJob, every 15 minutes, with a Secret for the API key |
+| Telemetry | OpenTelemetry metrics pushed (OTLP/HTTP) to an OTel Collector, exposed to Prometheus |
+| Visualisation | Grafana dashboard with five panels (JSON in `observability/dashboards/`) |
+| Runtime | Local `kind` cluster (Kubernetes in Docker) |
 
-## Architecture
+## Architecture (built)
 
 ```mermaid
 flowchart LR
-    subgraph Sources["Public sources (free)"]
-        A1[URLhaus / ThreatFox]
-        A2[CISA KEV]
-        A3[NVD]
-        A4[AlienVault OTX]
-        A5[Certificate Transparency logs]
-    end
+    U["URLhaus export<br/>(abuse.ch)"] --> C
 
-    subgraph K8s["Kubernetes cluster (kind / k3s)"]
-        C[Collectors<br/>CronJobs] --> Q1[(Queue: raw)]
-        Q1 --> N[Normaliser<br/>Deployment]
-        N --> Q2[(Queue: clean)]
-        Q2 --> E[Enricher<br/>Deployment]
-        E --> Q3[(Queue: enriched)]
-        Q3 --> S[Scorer<br/>Deployment]
-        S --> DB[(Postgres)]
-        DB --> X[STIX export]
+    subgraph K8s["kind cluster"]
+        CJ["CronJob<br/>every 15 min"] --> C["collector pod<br/>(Python + OTel SDK)"]
+        S["Secret<br/>abuse-ch"] -.API key.-> C
+        C -- "OTLP/HTTP :4318" --> OC["OTel Collector"]
+        OC -- ":8889 scrape" --> P["Prometheus"]
+        P --> G["Grafana"]
     end
-
-    subgraph Obs["Observability"]
-        OC[OTel Collector]
-        P[Prometheus<br/>metrics]
-        T[Tempo / Jaeger<br/>traces]
-        L[Loki<br/>logs]
-        G[Grafana<br/>dashboards]
-        OC --> P
-        OC --> T
-        OC --> L
-        P --> G
-        T --> G
-        L --> G
-    end
-
-    Sources --> C
-    C -.telemetry.-> OC
-    N -.telemetry.-> OC
-    E -.telemetry.-> OC
-    S -.telemetry.-> OC
 ```
 
-## Pipeline stages
+The collector is a short-lived batch job (about 15-20 seconds per run), so it **pushes** its metrics to the OTel Collector before exiting instead of waiting to be scraped. The Collector holds the latest values and exposes them for Prometheus.
 
-| Stage | Runs as | Responsibility |
-|---|---|---|
-| Collect | CronJob | Fetch each source on a schedule, push raw records to the queue |
-| Normalise | Deployment | Map every source to one common IOC schema |
-| Deduplicate | Within normaliser | Merge repeat sightings of the same indicator |
-| Enrich | Deployment | Add context (DNS, ASN, geolocation, cross-source sightings) |
-| Score | Deployment | Compute a confidence score from source count, recency and reliability |
-| Store / export | Postgres + job | Persist results and export as STIX bundles |
+## Metrics
 
-## Observability
+All are gauges describing the latest run. Names are as they appear in Prometheus.
 
-| Signal | Examples |
+| Metric | Meaning |
 |---|---|
-| Metrics | IOCs ingested per source, source freshness, error and rate-limit counts, queue depth |
-| Traces | One trace per IOC through collect, normalise, enrich and score, so the trace ID acts as provenance |
-| Logs | Structured logs from each stage, correlated to traces |
+| `urlhaus_records_fetched` | Rows in the feed at the last run |
+| `urlhaus_records_by_status{status}` | Rows per `url_status` (`online` / `offline`) |
+| `urlhaus_run_duration_seconds` | Run time of the last run |
+| `urlhaus_last_run_success` | `1` if the last run succeeded, `0` otherwise |
+| `urlhaus_last_success_timestamp_seconds` | Unix time of the last successful run (used for data age) |
 
-Questions the dashboards should answer:
-- Which sources produce the most useful IOCs, and which are mostly noise?
-- Is any feed stale, failing or rate-limiting?
-- Where do items spend the most time or fail?
+Dashboard queries wrap these in `max(...)` / `max by (status) (...)` so that series left over from Collector pod restarts do not show up as duplicates.
 
-## Data sources
-
-| Source | Data | Cost |
-|---|---|---|
-| abuse.ch (URLhaus, ThreatFox) | Malicious URLs and IOCs | Free (account key) |
-| CISA KEV | Actively exploited vulnerabilities | Free |
-| NVD | CVE data | Free (optional API key) |
-| AlienVault OTX | Community threat pulses | Free (account key) |
-| Certificate Transparency | New certificates, used for lookalike domain detection | Free |
-
-All collection is passive and uses public data or official APIs only. No scanning or probing of third-party systems.
-
-## Tech stack
-
-| Layer | Tooling |
-|---|---|
-| Language | Python |
-| Orchestration | Kubernetes (kind or k3s locally) |
-| Messaging | Redis or NATS |
-| Storage | Postgres |
-| Telemetry | OpenTelemetry SDK + OTel Collector |
-| Backends | Prometheus, Tempo/Jaeger, Loki, Grafana |
-| Export format | STIX 2.1 |
-
-## Roadmap
-
-| Phase | Weeks | Deliverable | Done |
-|---|---|---|---|
-| 1 | 1-2 | URLhaus collector as a CronJob, OTel metrics, first Grafana dashboard | [X] |
-| 2 | 3-4 | Add CISA KEV and OTX, common IOC schema, Postgres storage | [ ] |
-| 3 | 5-8 | Split into queued stages, end-to-end tracing per IOC | [ ] |
-| 4 | 9-12 | Certificate Transparency lookalike monitor, scoring, STIX export | [ ] |
-
-## Repository layout (planned)
+## Repository layout
 
 ```
 .
-├── collectors/        # one module per source
-├── pipeline/          # normaliser, enricher, scorer
-├── k8s/               # manifests: CronJobs, Deployments, ConfigMaps, NetworkPolicies
-├── observability/     # OTel Collector config, Grafana dashboards
-├── docs/              # design notes, schema
+├── collectors/
+│   └── urlhaus/
+│       ├── collector.py        # fetch + parse + emit metrics
+│       ├── requirements.txt
+│       └── Dockerfile
+├── k8s/
+│   └── urlhaus-cronjob.yaml    # CronJob (reads the abuse-ch Secret)
+├── observability/
+│   ├── otel-collector-values.yaml   # Helm values for the OTel Collector
+│   └── dashboards/
+│       └── urlhaus.json        # Grafana dashboard export
+├── pipeline/                   # planned: normaliser, enricher, scorer
+├── docs/
 └── README.md
 ```
 
-## Limitations
+## Run it locally
 
-- Built on free feeds, so coverage and quality are below commercial threat intelligence platforms.
-- Scores are heuristic and should be treated as triage aids, not verdicts.
-- Designed as an engineering and learning project, not a production security product.
+Prerequisites: Docker, `kind`, `kubectl`, Helm, Python 3, and a free abuse.ch Auth-Key from [auth.abuse.ch](https://auth.abuse.ch).
 
-## Responsible use
+**1. Configure the key (never commit it)**
 
-Uses public data only, makes no active scans, and keeps API keys in Kubernetes Secrets, never in the repo.
+```bash
+cp .env.example .env      # then edit .env
+# ABUSE_CH_AUTH_KEY=your-key-here   (no quotes, no spaces around "=")
+```
+
+`.env` is listed in `.gitignore`. Confirm with `git check-ignore -v .env`.
+
+**2. Try the collector without Kubernetes**
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+python -m pip install -r collectors/urlhaus/requirements.txt
+python collectors/urlhaus/collector.py
+```
+
+**3. Create the cluster and the monitoring stack**
+
+```bash
+kind create cluster --name ioc
+kubectl wait --for=condition=Ready node --all --timeout=180s
+kubectl create namespace monitoring
+
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo add grafana https://grafana.github.io/helm-charts
+helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
+helm repo update
+
+helm install prometheus prometheus-community/prometheus -n monitoring \
+  --set alertmanager.enabled=false \
+  --set prometheus-pushgateway.enabled=false \
+  --set server.persistentVolume.enabled=false
+
+helm install grafana grafana/grafana -n monitoring --set persistence.enabled=false
+
+helm install otel-collector open-telemetry/opentelemetry-collector -n monitoring \
+  -f observability/otel-collector-values.yaml
+```
+
+**4. Build, load and schedule the collector**
+
+```bash
+docker build -t urlhaus-collector:0.2 collectors/urlhaus
+kind load docker-image urlhaus-collector:0.2 --name ioc
+kubectl create secret generic abuse-ch --from-env-file=.env
+kubectl apply -f k8s/urlhaus-cronjob.yaml
+kubectl create job --from=cronjob/urlhaus-collector urlhaus-manual-1   # run once now
+kubectl logs job/urlhaus-manual-1
+```
+
+**5. Open Grafana**
+
+```bash
+kubectl port-forward -n monitoring svc/grafana 3000:80
+# user: admin, password:
+kubectl get secret -n monitoring grafana -o jsonpath="{.data.admin-password}" | base64 -d; echo
+```
+
+Add a Prometheus data source with URL `http://prometheus-server.monitoring.svc.cluster.local`, then import `observability/dashboards/urlhaus.json` (Dashboards → New → Import).
+
+## Design decisions
+
+| Decision | Reason |
+|---|---|
+| Push metrics (OTLP) instead of letting Prometheus scrape the job | The job lives about 15-20 seconds, shorter than a typical scrape interval |
+| `force_flush()` before exit | Otherwise metrics from a short run would be lost |
+| Gauges, not counters | Every run is a new process, so counters would reset to zero each time |
+| `metric_expiration: 30m` on the Collector's Prometheus exporter | The default (about 5 minutes) would drop the metrics between 15-minute runs |
+| `otel-collector-contrib` image | The slimmer `-k8s` image has no Prometheus exporter and crashes on start |
+| API key kept out of logs and traces | URLhaus puts the key in the request URL, so the script prints only exception *types*, never messages |
+| Non-zero exit on failure | Kubernetes marks the Job failed, so failures are visible in `kubectl get jobs` |
+
+## Security notes
+
+- API keys live in `.env` (gitignored) locally and in a Kubernetes Secret in the cluster. No secret values are committed.
+- Kubernetes Secrets are only base64-encoded, not encrypted. That is acceptable for a local learning cluster but not for production, where an external secret store or encryption at rest would be used.
+- All collection is passive: public data and official APIs only, with no scanning or probing of third-party systems.
+- Respect each provider's terms. abuse.ch asks that the export is not fetched more often than every 5 minutes and may require a subscription for commercial use.
+
+## Known limitations
+
+- One data source so far, and results are not stored: each run overwrites the previous run's numbers.
+- Without a persistent volume, Prometheus loses its history when its pod or the VM restarts. Grafana also loses its settings, so keep the exported dashboard JSON up to date.
+- "Records fetched" is the size of the whole rolling feed, not the number of *new* IOCs. Detecting new versus already-seen IOCs is planned for Phase 2.
+- Runs on a single-node local cluster with no high availability.
+- Free feeds are lower in coverage and quality than commercial threat intelligence, so this is an engineering and learning project, not a production security product.
+
+## Roadmap
+
+| Phase | Deliverable | Done |
+|---|---|---|
+| 1 | URLhaus collector as a CronJob, OTel metrics, Prometheus and Grafana dashboard | [x] |
+| 2 | Common IOC schema, Postgres storage, new-vs-seen detection, CISA KEV and AlienVault OTX collectors | [ ] |
+| 3 | Queued pipeline stages (normalise, enrich, score) and end-to-end tracing per IOC | [ ] |
+| 4 | Certificate Transparency lookalike monitor, scoring, STIX export | [ ] |
+
+### Target architecture (Phases 2-4, planned)
+
+```mermaid
+flowchart LR
+    subgraph Sources["Public sources"]
+        A1[URLhaus]
+        A2[CISA KEV]
+        A3[AlienVault OTX]
+        A4[Certificate Transparency]
+    end
+    subgraph K8s["Kubernetes"]
+        C[Collectors<br/>CronJobs] --> Q1[(raw)]
+        Q1 --> N[Normaliser]
+        N --> Q2[(clean)]
+        Q2 --> E[Enricher]
+        E --> Q3[(enriched)]
+        Q3 --> S[Scorer]
+        S --> DB[(Postgres)]
+        DB --> X[STIX export]
+    end
+    Sources --> C
+    C -.telemetry.-> OC[OTel Collector]
+    N -.-> OC
+    E -.-> OC
+    S -.-> OC
+    OC --> P[Prometheus / Tempo / Loki]
+    P --> G[Grafana]
+```
