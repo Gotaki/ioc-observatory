@@ -1,66 +1,116 @@
+# ===============================================================
+# 1. SERVICE
+# A stable network name for Postgres inside the cluster.
+# Pod IPs change every time a pod restarts; the Service name doesn't.
+# Other pods connect to:  postgres.default.svc.cluster.local:5432
+# ===============================================================
 apiVersion: v1
 kind: Service
 metadata:
   name: postgres
 spec:
   selector:
-    app: postgres
+    app: postgres          # route traffic to any pod carrying this label
   ports:
-    - port: 5432
-      targetPort: 5432
+    - port: 5432           # the port other pods connect to
+      targetPort: 5432     # the port Postgres listens on inside the container
 ---
+# ===============================================================
+# 2. STATEFULSET
+# Like a Deployment, but for apps that keep data. It gives the pod
+# a fixed name (postgres-0) and its own disk, which stays attached
+# when the pod is deleted and recreated.
+# ===============================================================
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: postgres
 spec:
-  serviceName: postgres
-  replicas: 1
+  serviceName: postgres    # the Service above; used for the pod's DNS name
+  replicas: 1              # one database pod (no replication in this project)
   selector:
     matchLabels:
-      app: postgres
-  template:
+      app: postgres        # which pods this StatefulSet owns
+  template:                # the pod blueprint: everything below describes the pod
     metadata:
       labels:
-        app: postgres
+        app: postgres      # must match the selector above and the Service selector
     spec:
       containers:
+        # -------------------------------------------------------
+        # 3. CONTAINER
+        # The Postgres process itself.
+        # -------------------------------------------------------
         - name: postgres
-          image: postgres:16-alpine
+          image: postgres:16-alpine   # small official image, pinned to major version 16
           ports:
-            - containerPort: 5432
+            - containerPort: 5432     # documents the port Postgres listens on
+
+          # -----------------------------------------------------
+          # 4. ENVIRONMENT VARIABLES
+          # The Postgres image reads these on first start to create
+          # the user, database and password.
+          # -----------------------------------------------------
           env:
-            - name: POSTGRES_USER
+            - name: POSTGRES_USER     # database user to create
               value: ioc
-            - name: POSTGRES_DB
+            - name: POSTGRES_DB       # database to create
               value: ioc
-            - name: POSTGRES_PASSWORD
+            - name: POSTGRES_PASSWORD # read from the Secret, never written in this file
               valueFrom:
                 secretKeyRef:
-                  name: postgres-auth
-                  key: POSTGRES_PASSWORD
-            - name: PGDATA
-              value: /var/lib/postgresql/data/pgdata
+                  name: postgres-auth           # the Secret you made with kubectl
+                  key: POSTGRES_PASSWORD        # which entry inside that Secret
+            - name: PGDATA            # where Postgres keeps its files. A subfolder is used
+              value: /var/lib/postgresql/data/pgdata  # because a fresh volume contains a
+                                                      # lost+found folder, which Postgres rejects
+
+          # -----------------------------------------------------
+          # 5. READINESS CHECK
+          # Kubernetes only marks the pod Ready, and only sends
+          # Service traffic to it, once this command succeeds.
+          # Stops the collector connecting before the DB is up.
+          # -----------------------------------------------------
           readinessProbe:
             exec:
-              command: ["pg_isready", "-U", "ioc", "-d", "ioc"]
-            initialDelaySeconds: 5
-            periodSeconds: 10
+              command: ["pg_isready", "-U", "ioc", "-d", "ioc"]  # asks Postgres "are you accepting connections?"
+            initialDelaySeconds: 5    # wait 5s after the container starts before the first check
+            periodSeconds: 10         # then check every 10s
+
+          # -----------------------------------------------------
+          # 6. RESOURCES
+          # requests = what the scheduler reserves for this pod.
+          # limits   = the ceiling. Going over the memory limit gets
+          #            the container killed; going over CPU slows it.
+          # -----------------------------------------------------
           resources:
             requests:
-              cpu: 100m
+              cpu: 100m               # 0.1 of a CPU core
               memory: 128Mi
             limits:
-              cpu: 500m
+              cpu: 500m               # 0.5 of a CPU core
               memory: 512Mi
+
+          # -----------------------------------------------------
+          # 7a. PERSISTENT STORAGE: mount
+          # Makes the disk (defined in 7b below) appear inside the
+          # container at the folder where Postgres stores its data.
+          # -----------------------------------------------------
           volumeMounts:
-            - name: data
+            - name: data              # must match the claim name in 7b
               mountPath: /var/lib/postgresql/data
+
+  # -------------------------------------------------------------
+  # 7b. PERSISTENT STORAGE: claim
+  # Creates one PersistentVolumeClaim per pod (here: data-postgres-0).
+  # kind provisions the actual disk automatically. The claim, and the
+  # data on it, outlives the pod, so deleting postgres-0 loses nothing.
+  # -------------------------------------------------------------
   volumeClaimTemplates:
     - metadata:
         name: data
       spec:
-        accessModes: ["ReadWriteOnce"]
+        accessModes: ["ReadWriteOnce"]  # read-write, mountable by one node at a time
         resources:
           requests:
-            storage: 1Gi
+            storage: 1Gi                # size of the disk requested
