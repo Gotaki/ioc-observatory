@@ -13,16 +13,17 @@ ON CONFLICT (source, source_id) DO NOTHING
 
 
 def save_iocs(iocs: list[IOC]) -> tuple[int, int]:
-    """Insert IOCs, skipping known ones. Returns (new_count, total_in_db)."""
+    """Insert IOCs, skipping known ones. Returns (new_count, total_for_this_source)."""
+    if not iocs:
+        return 0, 0
+    source = iocs[0].source        # every IOC in one call comes from the same source
     rows = [(i.source, i.source_id, i.ioc_type, i.value, i.first_seen, i.last_seen,
              i.status, i.threat, list(i.tags), i.reference_url) for i in iocs]
 
-    # connect() with no arguments reads PGHOST/PGUSER/PGPASSWORD from the environment.
-    # The "with" block commits on success and rolls back on error.
     with psycopg.connect() as conn, conn.cursor() as cur:
-        cur.execute("SELECT count(*) FROM iocs")
+        cur.execute("SELECT count(*) FROM iocs WHERE source = %s", (source,))
         before = cur.fetchone()[0]
         cur.executemany(INSERT_SQL, rows)
-        cur.execute("SELECT count(*) FROM iocs")
+        cur.execute("SELECT count(*) FROM iocs WHERE source = %s", (source,))
         after = cur.fetchone()[0]
     return after - before, after
