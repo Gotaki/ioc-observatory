@@ -26,6 +26,88 @@
         "type": "prometheus",
         "uid": "fg1elolun6br4f"
       },
+      "description": "Shows OK if the most recent collector run finished without errors, or FAILED if it didn’t. A failed run means fetching the feed or saving to the database broke.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "color": "red",
+                  "index": 1,
+                  "text": "Failed"
+                },
+                "1": {
+                  "color": "green",
+                  "index": 0,
+                  "text": "OK"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.3.1",
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "max(urlhaus_last_run_success)",
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Last Run OK?",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "fg1elolun6br4f"
+      },
+      "description": "How long ago the last successful run finished. Green under 20 minutes, red over 30. The collector runs every 15 minutes, so a rising number means runs are failing or paused.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -50,9 +132,9 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
+        "h": 5,
+        "w": 6,
+        "x": 6,
         "y": 0
       },
       "id": 5,
@@ -91,6 +173,7 @@
         "type": "prometheus",
         "uid": "fg1elolun6br4f"
       },
+      "description": "Number of URLs in abuse.ch’s rolling URLhaus export at the last run. This is the size of the feed, not the number of new threats.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -110,8 +193,8 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 12,
+        "h": 5,
+        "w": 6,
         "x": 12,
         "y": 0
       },
@@ -155,38 +238,19 @@
         "type": "prometheus",
         "uid": "fg1elolun6br4f"
       },
+      "description": "Total unique indicators saved in Postgres since the project started. Each source and ID is stored once, and this should only ever go up.",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "thresholds"
           },
-          "mappings": [
-            {
-              "options": {
-                "0": {
-                  "color": "red",
-                  "index": 1,
-                  "text": "Failed"
-                },
-                "1": {
-                  "color": "green",
-                  "index": 0,
-                  "text": "OK"
-                }
-              },
-              "type": "value"
-            }
-          ],
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
                 "color": "green",
                 "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
               }
             ]
           }
@@ -194,12 +258,12 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 8
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 0
       },
-      "id": 4,
+      "id": 7,
       "options": {
         "colorMode": "value",
         "graphMode": "area",
@@ -221,13 +285,13 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "max(urlhaus_last_run_success)",
+          "expr": "max(urlhaus_db_total)",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Last Run OK?",
+      "title": "Total IOCs stored",
       "type": "stat"
     },
     {
@@ -235,6 +299,7 @@
         "type": "prometheus",
         "uid": "fg1elolun6br4f"
       },
+      "description": "IOCs seen for the first time in each run. The first run stored the whole feed (about 33,000), and later runs should show only a handful.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -249,7 +314,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "fillOpacity": 20,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -263,9 +328,9 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "auto",
+            "showPoints": "never",
             "showValues": false,
-            "spanNulls": false,
+            "spanNulls": true,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -292,10 +357,136 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 8
+        "h": 9,
+        "w": 8,
+        "x": 0,
+        "y": 5
+      },
+      "id": 6,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.3.1",
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "max(urlhaus_records_new)",
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "New IOCs per run",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "fg1elolun6br4f"
+      },
+      "description": "URLs in the feed split by abuse.ch’s url_status. Online means the URL was still serving malware at its last check. Offline means it has gone down.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "online"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "dark-red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "offline"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 8,
+        "y": 5
       },
       "id": 2,
       "options": {
@@ -329,6 +520,7 @@
         "type": "prometheus",
         "uid": "fg1elolun6br4f"
       },
+      "description": "How long each collector run took, from fetch to database insert. It’s normally under about 30 seconds, and rising values can mean a slower feed or a larger database.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -343,7 +535,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "fillOpacity": 20,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -357,7 +549,7 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "auto",
+            "showPoints": "never",
             "showValues": false,
             "spanNulls": false,
             "stacking": {
@@ -387,10 +579,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 16
+        "h": 9,
+        "w": 8,
+        "x": 16,
+        "y": 5
       },
       "id": 3,
       "options": {
@@ -398,7 +590,7 @@
           "calcs": [],
           "displayMode": "list",
           "placement": "bottom",
-          "showLegend": true
+          "showLegend": false
         },
         "tooltip": {
           "hideZeros": false,
@@ -421,18 +613,19 @@
     }
   ],
   "preload": false,
+  "refresh": "1m",
   "schemaVersion": 42,
   "tags": [],
   "templating": {
     "list": []
   },
   "time": {
-    "from": "now-3h",
+    "from": "now-6h",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "browser",
   "title": "URLhaus collector",
   "uid": "ad95zcc",
-  "version": 10
+  "version": 27
 }
