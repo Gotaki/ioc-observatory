@@ -18,6 +18,10 @@ from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
 
+from common.ioc import from_urlhaus
+from common.db import save_iocs
+
+
 BASE = "https://urlhaus-api.abuse.ch/v2/files/exports"
 
 
@@ -79,7 +83,8 @@ def main() -> None:
     g_duration = meter.create_gauge("urlhaus.run.duration", unit="s", description="Run time in seconds")
     g_success = meter.create_gauge("urlhaus.last_run.success", description="1 if the last run worked, else 0")
     g_last_ok = meter.create_gauge("urlhaus.last_success.timestamp", unit="s", description="Unix time of last good run")
-
+    g_new = meter.create_gauge("urlhaus.records.new", description="IOCs first seen in this run")
+    g_total = meter.create_gauge("urlhaus.db.total", description="Total IOCs stored in Postgres")
     start = time.monotonic()
     ok = False
     try:
@@ -97,6 +102,14 @@ def main() -> None:
                 if col == "url_status":
                     for status, n in counts.items():
                         g_status.set(n, {"status": status})
+         
+        # --- NEW: store the IOCs in Postgres and count how many were new ---
+        iocs = [from_urlhaus(r) for r in records]
+        new_count, total = save_iocs(iocs)
+        print(f"new IOCs: {new_count}, total stored: {total}")
+        g_new.set(new_count)
+        g_total.set(total)
+
         ok = True
     except FetchError as exc:
         print(f"run failed: {exc}")

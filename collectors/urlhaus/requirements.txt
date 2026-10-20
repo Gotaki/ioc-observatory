@@ -2,3 +2,4 @@ requests
 python-dotenv
 opentelemetry-sdk
 opentelemetry-exporter-otlp-proto-http
+psycopg[binary]

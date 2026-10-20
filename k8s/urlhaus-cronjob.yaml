@@ -15,7 +15,7 @@ spec:
           restartPolicy: Never
           containers:
             - name: collector
-              image: urlhaus-collector:0.2
+              image: urlhaus-collector:0.4
               imagePullPolicy: IfNotPresent
               env:
                 - name: ABUSE_CH_AUTH_KEY
@@ -26,6 +26,18 @@ spec:
                 # Where to push metrics: the Collector's OTLP/HTTP port (4318).
                 - name: OTEL_EXPORTER_OTLP_ENDPOINT
                   value: "http://otel-collector.monitoring.svc.cluster.local:4318"
+                  # Postgres connection (psycopg reads these PG* variables automatically)
+                - name: PGHOST          # Service name from k8s/postgres.yaml
+                  value: postgres
+                - name: PGDATABASE      # matches POSTGRES_DB
+                  value: ioc
+                - name: PGUSER          # matches POSTGRES_USER
+                  value: ioc
+                - name: PGPASSWORD      # pulled from the Secret, never stored in this file
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-auth
+                      key: POSTGRES_PASSWORD
               resources:
                 requests: {cpu: 50m, memory: 64Mi}
-                limits: {cpu: 250m, memory: 256Mi}
+                limits: {cpu: 250m, memory: 512Mi}
