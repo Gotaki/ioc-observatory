@@ -13,14 +13,10 @@ from collections import Counter
 import requests
 from dotenv import load_dotenv
 from opentelemetry import metrics
-from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
-from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-from opentelemetry.sdk.resources import Resource
 
 from common.ioc import from_urlhaus
 from common.db import save_iocs
-
+from common.telemetry import setup_metrics
 
 BASE = "https://urlhaus-api.abuse.ch/v2/files/exports"
 
@@ -58,23 +54,9 @@ def parse(text: str):
     return header, [dict(zip(header, r)) for r in rows]
 
 
-def setup_metrics():
-    """Create the OTel metrics pipeline, or return None if no endpoint is configured."""
-    if not os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
-        return None
-    # The exporter reads the endpoint from that environment variable by itself.
-    reader = PeriodicExportingMetricReader(OTLPMetricExporter(), export_interval_millis=60_000)
-    provider = MeterProvider(
-        resource=Resource.create({"service.name": "urlhaus-collector"}),
-        metric_readers=[reader],
-    )
-    metrics.set_meter_provider(provider)
-    return provider
-
-
 def main() -> None:
     load_dotenv()
-    provider = setup_metrics()
+    provider = setup_metrics("urlhaus-collector")
     meter = metrics.get_meter("urlhaus-collector")  # a harmless no-op meter if telemetry is off
 
     # Gauges: "the value at the end of the latest run".
