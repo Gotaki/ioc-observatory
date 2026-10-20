@@ -52,3 +52,28 @@ def from_urlhaus(row: dict) -> IOC:
         tags=tags,
         reference_url=_clean(row.get("urlhaus_link")),
     )
+
+def _date(text: Optional[str]) -> Optional[datetime]:
+    """Parse a date-only string like '2026-10-20' (KEV) as midnight UTC."""
+    text = (text or "").strip()
+    if not text:
+        return None
+    return datetime.strptime(text, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+
+
+def from_kev(item: dict) -> IOC:
+    """Map one CISA KEV entry (a dict from the JSON feed) to an IOC."""
+    cve = item["cveID"].strip()
+    tags = tuple(t for t in (item.get("vendorProject"), item.get("product")) if t)
+    if (item.get("knownRansomwareCampaignUse") or "").lower() == "known":
+        tags += ("ransomware",)
+    return IOC(
+        source="cisa_kev",
+        source_id=cve,                      # the CVE ID is unique, so it is the key
+        ioc_type="cve",
+        value=cve,
+        first_seen=_date(item.get("dateAdded")),
+        threat=_clean(item.get("vulnerabilityName")),
+        tags=tags,
+        reference_url=f"https://nvd.nist.gov/vuln/detail/{cve}",
+    )
